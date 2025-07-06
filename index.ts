@@ -2,8 +2,7 @@ import { createLibp2p } from 'libp2p';
 import { webSockets } from '@libp2p/websockets';
 import { noise } from '@chainsafe/libp2p-noise';
 import { gossipsub } from '@chainsafe/libp2p-gossipsub';
-import { Chess, Move } from 'chess.js'; // Added Square and PieceSymbol
-// import { Chess, Move, Square, PieceSymbol } from 'chess.js'; // Added Square and PieceSymbol
+import { Chess, Move } from 'chess.js';
 import * as filters from "@libp2p/websockets/filters";
 import { bootstrap } from "@libp2p/bootstrap";
 import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
@@ -62,19 +61,18 @@ interface CurrentStateMessage extends BaseMessage {
 
 // The 'Move' type from chess.js already has 'from', 'to', 'promotion' when verbose is true.
 // We just need to ensure we're accessing them correctly.
-// No separate VerboseMove interface is strictly needed if we cast to 'any' or check properties.
 // However, for clarity and type safety, let's define an interface that matches what
 // game.moves({ verbose: true }) actually returns, including 'from', 'to', 'promotion'.
 interface ChessJsVerboseMove extends Move {
-    from: any // Square; // Changed from string to Square
-    to: any // Square;   // Changed from string to Square
-    promotion?: any // PieceSymbol; // Changed from string to PieceSymbol, kept optional
+    from: any // Square;
+    to: any // Square;
+    promotion?: any // PieceSymbol;
     // Other properties like color, piece, san, flags, etc., are also present
 }
 
 const bootstrapMultiaddrs = [
-  "/dns4/r1.dozy.io/tcp/443/tls/ws/p2p/12D3KooWHEXu2JRgq7BKa7x4ahmjhiG5XZ2bUHF1Dcy56ueCXw48",
-  "/dns4/r2.dozy.io/tcp/443/tls/ws/p2p/12D3KooWLnnFfJxesZZN4wWKNxAudd9atnBnvWPhxg2LTWigExPP",
+    "/dns4/r1.dozy.io/tcp/443/tls/ws/p2p/12D3KooWHEXu2JRgq7BKa7x4ahmjhiG5XZ2bUHF1Dcy56ueCXw48",
+    "/dns4/r2.dozy.io/tcp/443/tls/ws/p2p/12D3KooWLnnFfJxesZZN4wWKNxAudd9atnBnvWPhxg2LTWigExPP",
 ]
 
 
@@ -88,10 +86,10 @@ async function sha256(message: string): Promise<string> {
 }
 
 // --- Global State Variables ---
-let libp2pNode = null;
+let libp2pNode: any = null;
 let peerId: string = '';
 let connectedPeers: Set<string> = new Set();
-let game: Chess| null = null;
+let game: any = null;
 let fen: string = '';
 let moveHistory: MoveBlock[] = [];
 let currentVotes: Map<string, number> = new Map();
@@ -101,7 +99,7 @@ let votingTimer: NodeJS.Timeout | null = null;
 let currentMoveBlock: MoveBlock | null = null; // To store the last finalized block for new turns
 
 // Single Gossipsub topic name
-const MAIN_TOPIC = 'pubXXX-dev';
+const MAIN_TOPIC = `pubXXX-dev`;
 
 // Add a game message to the CLI output
 function addGameMessage(message: string) {
@@ -115,24 +113,36 @@ async function handleProposal(proposal: ProposalMessage, fromPeer: string) {
     // Ensure we only process the proposal payload, not the 'type' field
     const { move, turn } = proposal;
 
-    if (!game || !isVotingActive || turn !== currentTurn || fromPeer === peerId) {
-        console.log('ignoring proposal', isVotingActive, turn, currentTurn, fromPeer)
-        return; // Ignore if not in voting phase, wrong turn, or self-proposal
+    if (!game) {
+        addGameMessage(`Ignoring proposal from ${fromPeer} for move ${move}: Game not initialized.`);
+        return;
+    }
+    if (!isVotingActive) {
+        addGameMessage(`Ignoring proposal from ${fromPeer} for move ${move}: Not in active voting period.`);
+        return;
+    }
+    if (turn !== currentTurn) {
+        addGameMessage(`Ignoring proposal from ${fromPeer} for move ${move}: Proposal turn (${turn}) does not match current voting turn (${currentTurn}).`);
+        return;
+    }
+    if (fromPeer === peerId) {
+        // addGameMessage(`Ignoring self-proposal for move ${move}.`); // Too chatty, keep commented
+        // This check can be simplified or removed if emitSelf is true and handled by normal flow
     }
 
     // Validate the move using chess.js
     const tempGame = new Chess(fen); // Use current FEN to validate
     try {
         // The 'move' in proposal is now expected to be a UCI string
-        const moveResult = tempGame.move(move, { strict: true });
+        const moveResult = tempGame.move(move); // No strict: true
         if (moveResult) {
             currentVotes.set(move, (currentVotes.get(move) || 0) + 1);
-            addGameMessage(`Vote received for ${move} from ${fromPeer}. Total votes: ${currentVotes.get(move) || 1}`);
+            addGameMessage(`Vote received for ${move} from ${fromPeer}. Total votes for ${move}: ${currentVotes.get(move)}`);
         } else {
-            addGameMessage(`Invalid move proposal ignored from ${fromPeer}: ${move}`);
+            addGameMessage(`Invalid move proposal ignored from ${fromPeer}: ${move} (Chess.js validation failed). Current FEN: ${fen}`);
         }
     } catch (e: any) {
-        addGameMessage(`Invalid move proposal ignored from ${fromPeer}: ${move} (Error: ${e.message})`);
+        addGameMessage(`Invalid move proposal ignored from ${fromPeer}: ${move} (Error during validation: ${e.message}). Current FEN: ${fen}`);
     }
 }
 
@@ -140,6 +150,12 @@ async function handleProposal(proposal: ProposalMessage, fromPeer: string) {
 async function finalizeMove() {
     isVotingActive = false;
     if (votingTimer) clearTimeout(votingTimer);
+
+    addGameMessage(`Current votes before finalization for turn ${currentTurn}:`);
+    currentVotes.forEach((count, move) => {
+        addGameMessage(`  - ${move}: ${count} votes`);
+    });
+
 
     if (currentVotes.size === 0) {
         addGameMessage('No valid votes received. Skipping turn.');
@@ -184,8 +200,8 @@ async function finalizeMove() {
 
     if (winningMoveUCI && game) {
         const tempGame = new Chess(fen);
-        // Use the winningMoveUCI directly
-        const moveResult = tempGame.move(winningMoveUCI, { strict: true });
+        // Use the winningMoveUCI directly. No strict: true.
+        const moveResult = tempGame.move(winningMoveUCI);
 
         if (moveResult) {
             const newFen = tempGame.fen();
@@ -207,7 +223,7 @@ async function finalizeMove() {
             };
             currentMoveBlock = newMoveBlock; // Store for immediate use by self
 
-            addGameMessage(`Finalizing move: ${winningMoveUCI}. Broadcasting block ${newMoveBlock.blockHash.substring(0, 8)}...`);
+            addGameMessage(`Finalizing move: ${winningMoveUCI}. Broadcasting block ${newMoveBlock.blockHash.substring(0, 8)}...`); // Shorten hash for log
             if (libp2pNode) {
                 // Publish with the 'finalized_move' type
                 await libp2pNode.services.pubsub.publish(MAIN_TOPIC, new TextEncoder().encode(JSON.stringify({ type: 'finalized_move', ...newMoveBlock } as FinalizedMoveMessage)));
@@ -230,22 +246,19 @@ async function finalizeMove() {
 async function handleFinalizedMove(incomingBlockMessage: FinalizedMoveMessage, fromPeer: string) {
     if (!game || !peerId) return;
 
-    // Destructure the actual MoveBlock from the message
     const incomingBlock: MoveBlock = incomingBlockMessage;
 
-    // 1. Basic Validation of incoming block
+    // 1. Basic Validation of incoming block (hash, chess move legality)
     const expectedBlockHash = await sha256(`${incomingBlock.previousBlockHash}_${incomingBlock.moveUCI}_${incomingBlock.fenBeforeMove}_${incomingBlock.fenAfterMove}_${incomingBlock.timestamp}_${incomingBlock.broadcasterPeerId}_${incomingBlock.turn}`);
     if (expectedBlockHash !== incomingBlock.blockHash) {
         addGameMessage(`Received invalid block hash from ${fromPeer} for turn ${incomingBlock.turn}. Ignoring.`);
         return;
     }
 
-    // 2. Validate move using chess.js
-    const tempGame = new Chess(incomingBlock.fenBeforeMove);
+    const tempGameForValidation = new Chess(incomingBlock.fenBeforeMove);
     try {
-        // Use the incomingBlock.moveUCI directly
-        const moveResult = tempGame.move(incomingBlock.moveUCI, { strict: true });
-        if (!moveResult || tempGame.fen() !== incomingBlock.fenAfterMove) {
+        const moveResult = tempGameForValidation.move(incomingBlock.moveUCI); // No strict: true
+        if (!moveResult || tempGameForValidation.fen() !== incomingBlock.fenAfterMove) {
             addGameMessage(`Received block with invalid chess move from ${fromPeer} for turn ${incomingBlock.turn}. Ignoring.`);
             return;
         }
@@ -254,84 +267,99 @@ async function handleFinalizedMove(incomingBlockMessage: FinalizedMoveMessage, f
         return;
     }
 
-    // 3. Fork Resolution (Longest Valid Chain & Hash Tie-breaker)
-    let newHistory = [...moveHistory];
-
-    // Case 1: Incoming block extends our current canonical chain
-    const lastLocalBlock = newHistory.length > 0 ? newHistory[newHistory.length - 1] : null;
-
-    // Check if the incoming block is for the current expected turn and extends the current chain
-    if (incomingBlock.previousBlockHash === (lastLocalBlock?.blockHash || 'GENESIS') && incomingBlock.turn === currentTurn) {
-        if (currentMoveBlock && currentMoveBlock.blockHash === incomingBlock.blockHash) {
-            // This is our own block that we just broadcasted, accept it.
-            addGameMessage(`Accepted our own finalized move for turn ${incomingBlock.turn}: ${incomingBlock.moveUCI}`);
-            newHistory.push(incomingBlock);
-        } else if (lastLocalBlock && incomingBlock.blockHash === lastLocalBlock.blockHash) {
-            // This is a duplicate of the last block we already have. Ignore.
-            return;
-        } else if (lastLocalBlock && incomingBlock.previousBlockHash === lastLocalBlock.blockHash) {
-            // This is a new block extending our chain. Accept it.
-            addGameMessage(`Accepted finalized move for turn ${incomingBlock.turn} from ${fromPeer}: ${incomingBlock.moveUCI}`);
-            newHistory.push(incomingBlock);
-        } else if (incomingBlock.turn === currentTurn && incomingBlock.previousBlockHash === (lastLocalBlock?.blockHash || 'GENESIS')) {
-            // This is a competing block for the current turn (a fork of equal length)
-            // Apply hash tie-breaker
-            if (!currentMoveBlock || incomingBlock.blockHash < currentMoveBlock.blockHash) {
-                addGameMessage(`Fork detected for turn ${incomingBlock.turn}. Preferring block ${incomingBlock.blockHash.substring(0, 8)}... from ${fromPeer} over current.`);
-                newHistory.pop(); // Remove our current block for this turn
-                newHistory.push(incomingBlock);
-                currentMoveBlock = incomingBlock; // Update our reference
-            } else {
-                addGameMessage(`Fork detected for turn ${incomingBlock.turn}. Keeping current block over ${incomingBlock.blockHash.substring(0, 8)}... from ${fromPeer}.`);
-                return; // Keep current history
-            }
+    // Determine the base history to which this incoming block might be appended
+    let baseHistory: MoveBlock[] = [];
+    let foundPreviousBlockInLocalHistory = false;
+    for (let i = 0; i < moveHistory.length; i++) {
+        baseHistory.push(moveHistory[i]);
+        if (moveHistory[i].blockHash === incomingBlock.previousBlockHash) {
+            foundPreviousBlockInLocalHistory = true;
+            break;
         }
-    } else if (incomingBlock.turn > currentTurn) {
-        // Case 2: Incoming block is for a future turn, implying we are behind or on a shorter chain
-        // We need to request full history or check if this block can extend a known shorter chain
-        addGameMessage(`Received future block for turn ${incomingBlock.turn} from ${fromPeer}. Requesting full history to sync.`);
+    }
+
+    // Case: Incoming block's previous hash is not in our history (major desync or new joiner)
+    if (!foundPreviousBlockInLocalHistory && incomingBlock.previousBlockHash !== 'GENESIS') {
+        addGameMessage(`Received block for turn ${incomingBlock.turn} from ${fromPeer} whose previous block (${incomingBlock.previousBlockHash.substring(0,8)}...) is not in our history. Requesting full history.`);
         if (libp2pNode) {
-            // Publish with the 'history_request' type
             await libp2pNode.services.pubsub.publish(MAIN_TOPIC, new TextEncoder().encode(JSON.stringify({ type: 'history_request', requesterId: peerId } as HistoryRequestMessage)));
         }
-        return; // Don't update yet, wait for full history
-    } else if (incomingBlock.turn < currentTurn) {
-        // Case 3: Incoming block is for a past turn, ignore (already processed)
-        // addGameMessage(`Received old block for turn ${incomingBlock.turn} from ${fromPeer}. Ignoring.`);
         return;
     }
 
-    // Update local game state if newHistory has changed
-    if (newHistory.length !== moveHistory.length || (newHistory.length > 0 && newHistory[newHistory.length - 1].blockHash !== moveHistory[moveHistory.length - 1]?.blockHash)) {
-        const tempGame = new Chess();
-        let isValidChain = true;
-        for (const block of newHistory) {
-            if (tempGame.fen() !== block.fenBeforeMove) {
-                isValidChain = false;
-                addGameMessage(`Chain validation failed: FEN mismatch for block ${block.blockHash.substring(0, 8)}...`);
-                break;
-            }
-            const moveResult = tempGame.move(block.moveUCI, { strict: true });
-            if (!moveResult || tempGame.fen() !== block.fenAfterMove) {
-                isValidChain = false;
-                addGameMessage(`Chain validation failed: Invalid move in block ${block.blockHash.substring(0, 8)}...`);
-                break;
-            }
-        }
+    // Case: Incoming block is for a turn we've already processed and it's not the current tail
+    // This handles duplicates or old blocks from stale forks
+    if (incomingBlock.turn < currentTurn && incomingBlock.blockHash !== (moveHistory.length > 0 ? moveHistory[moveHistory.length - 1].blockHash : 'GENESIS')) {
+        addGameMessage(`Received old block for turn ${incomingBlock.turn} from ${fromPeer}. Ignoring.`);
+        return;
+    }
 
-        if (isValidChain) {
-            game = tempGame;
-            fen = tempGame.fen();
-            moveHistory = newHistory;
-            currentTurn = newHistory.length; // Turn number is history length (0-indexed)
-            currentVotes = new Map(); // Clear votes for next round
-            addGameMessage(`Game state updated to turn ${currentTurn}. New FEN: ${game.fen()}`);
-            console.log(game.ascii()); // Print board to console
-            startVotingPeriod(); // Start new voting period after state update
-        } else {
-            addGameMessage('Received history is invalid, reverting to previous state.');
-            // Revert to previous state if the new chain is invalid
+    // Create a candidate history by appending the incoming block
+    let candidateHistory = [...baseHistory, incomingBlock];
+
+    // Validate the entire candidate chain from the beginning
+    const tempGameForChainValidation = new Chess();
+    let isValidChain = true;
+    for (const block of candidateHistory) {
+        if (tempGameForChainValidation.fen() !== block.fenBeforeMove) {
+            isValidChain = false;
+            addGameMessage(`Chain validation failed: FEN mismatch for block ${block.blockHash.substring(0, 8)}... Expected: ${tempGameForChainValidation.fen()}, Got: ${block.fenBeforeMove}`);
+            break;
         }
+        const moveResult = tempGameForChainValidation.move(block.moveUCI); // No strict: true
+        if (!moveResult || tempGameForChainValidation.fen() !== block.fenAfterMove) {
+            isValidChain = false;
+            addGameMessage(`Chain validation failed: Invalid move in block ${block.blockHash.substring(0, 8)}... Move: ${block.moveUCI}, Result FEN: ${tempGameForChainValidation.fen()}, Expected FEN: ${block.fenAfterMove}`);
+            break;
+        }
+    }
+
+    if (!isValidChain) {
+        addGameMessage(`Received history from ${fromPeer} for turn ${incomingBlock.turn} is invalid. Ignoring.`);
+        return;
+    }
+
+    // 4. Adopt the longest valid chain, with hash tie-breaker
+    // Only update if the candidate chain is strictly longer OR
+    // if it's the same length but has a deterministically preferred hash
+    const currentHistoryLength = moveHistory.length;
+    const candidateHistoryLength = candidateHistory.length;
+
+    let shouldUpdate = false;
+    if (candidateHistoryLength > currentHistoryLength) {
+        shouldUpdate = true;
+        addGameMessage(`Adopting longer valid history from ${fromPeer} (length ${candidateHistoryLength} vs ${currentHistoryLength}).`);
+    } else if (candidateHistoryLength === currentHistoryLength && candidateHistoryLength > 0) {
+        const lastIncomingBlockHash = incomingBlock.blockHash;
+        const lastPrevBlockHash = moveHistory[moveHistory.length - 1].blockHash;
+
+        if (lastIncomingBlockHash < lastPrevBlockHash) {
+            shouldUpdate = true;
+            addGameMessage(`Adopting equally long history from ${fromPeer} due to lower hash for turn ${incomingBlock.turn}.`);
+        } else if (lastIncomingBlockHash === lastPrevBlockHash) {
+            // It's the same block we already have, ignore.
+            // addGameMessage(`Received duplicate block for turn ${incomingBlock.turn} from ${fromPeer}. Ignoring.`);
+            return;
+        } else {
+            addGameMessage(`Keeping current history for turn ${incomingBlock.turn} over incoming from ${fromPeer} (higher hash).`);
+        }
+    } else {
+        // Incoming block is shorter or same length but not preferred, and not a duplicate.
+        addGameMessage(`Received block for turn ${incomingBlock.turn} from ${fromPeer} is shorter or same and not preferred. Keeping current state.`);
+    }
+
+
+    if (shouldUpdate) {
+        moveHistory = candidateHistory; // Update global moveHistory
+        game = tempGameForChainValidation; // Use the game state from the validated chain
+        fen = game.fen();
+        currentTurn = moveHistory.length; // Turn number is history length (0-indexed)
+        currentVotes = new Map(); // Clear votes for next round
+        currentMoveBlock = incomingBlock; // Update currentMoveBlock to the newly accepted tail
+
+        addGameMessage(`Game state updated to turn ${currentTurn}. New FEN: ${game.fen()}`);
+        console.log(game.ascii()); // Print board to console
+        startVotingPeriod(); // Start new voting period after state update
     }
 }
 
@@ -366,7 +394,7 @@ async function handleFullHistory(incomingMessage: HistoryResponseMessage, fromPe
             isValidChain = false;
             break;
         }
-        const moveResult = tempGame.move(block.moveUCI, { strict: true });
+        const moveResult = tempGame.move(block.moveUCI); // No strict: true
         if (!moveResult || tempGame.fen() !== block.fenAfterMove) {
             isValidChain = false;
             addGameMessage(`Invalid move in received history from ${fromPeer} for turn ${block.turn}.`);
@@ -418,7 +446,11 @@ function convertMoveToUCI(move: ChessJsVerboseMove): string {
 
 // Bot logic to propose a random valid move
 async function botProposeMove() {
-    if (!game || !libp2pNode || !isVotingActive || game.isGameOver()) return;
+    if (!game || !libp2pNode || !isVotingActive || game.isGameOver()) {
+        // More specific logging for debugging why bot isn't proposing
+        // addGameMessage(`Bot not proposing: Game initialized=${!!game}, Libp2p node ready=${!!libp2pNode}, Voting active=${isVotingActive}, Game Over=${game?.isGameOver()}`);
+        return;
+    }
 
     // game.moves({ verbose: true }) returns an array of Move objects with 'from', 'to', 'promotion' etc.
     const possibleMoves = game.moves({ verbose: true }) as ChessJsVerboseMove[];
@@ -432,8 +464,10 @@ async function botProposeMove() {
 
     const proposalPayload: ProposalMessage = { type: 'proposal', move: randomMoveUCI, turn: currentTurn };
 
-    addGameMessage(`Bot proposing move: ${randomMoveUCI}`);
+    addGameMessage(`Bot proposing move: ${randomMoveUCI} for turn ${currentTurn}`);
     await libp2pNode.services.pubsub.publish(MAIN_TOPIC, new TextEncoder().encode(JSON.stringify(proposalPayload)));
+
+    // No longer manually call handleProposal here, as emitSelf: true will handle it via the event listener
 }
 
 // Start the voting period
@@ -441,10 +475,14 @@ function startVotingPeriod() {
     if (votingTimer) clearTimeout(votingTimer);
     currentVotes = new Map(); // Clear votes for the new round
     isVotingActive = true;
-    addGameMessage(`Voting for turn ${currentTurn + 1} (${game?.turn() === 'w' ? 'White' : 'Black'}) started. 5 seconds...`);
+    addGameMessage(`Voting for turn ${currentTurn + 1} (${game?.turn() === 'w' ? 'White' : 'Black'}) started. 5 seconds... Current local turn: ${currentTurn}`); // Added log
 
-    // Bot proposes a move immediately
-    botProposeMove();
+    // Introduce a small delay before bots propose to allow network propagation.
+    // This reduces race conditions where proposals for a new turn arrive before
+    // the previous turn's finalized block has been processed by all peers.
+    setTimeout(() => {
+        botProposeMove();
+    }, 1000); // Increased to 1000ms (1 second) delay
 
     votingTimer = setTimeout(() => {
         addGameMessage('Voting period ended. Finalizing move...');
@@ -457,7 +495,6 @@ function startVotingPeriod() {
 function passthroughMapper(info) {
     return info
 }
-
 function applicationScore (p: string) {
     if (p === '12D3KooWLnnFfJxesZZN4wWKNxAudd9atnBnvWPhxg2LTWigExPP' || p ==='12D3KooWHEXu2JRgq7BKa7x4ahmjhiG5XZ2bUHF1Dcy56ueCXw48') {
       return 1200
@@ -512,7 +549,7 @@ async function main() {
           Dhi: 12,
           Dout: 2,
           doPX: false,
-          emitSelf: false,
+          emitSelf: true, // Changed to true to ensure self-published messages are received
           globalSignaturePolicy: 'StrictSign',
           allowPublishToZeroTopicPeers: true,
           pruneBackoff: 60 * 1000,
@@ -609,10 +646,8 @@ async function main() {
         node.services.pubsub.subscribe(MAIN_TOPIC);
 
         node.services.pubsub.addEventListener('message', async (evt) => {
-            console.log('pubsub', evt)
             const { topic, data, from } = evt.detail;
             const message = new TextDecoder().decode(data);
-            console.log('pubsub message', message)
 
             // Only process messages from the main topic
             if (topic !== MAIN_TOPIC) {
