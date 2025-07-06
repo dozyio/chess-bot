@@ -241,7 +241,7 @@ function startVotingPeriod() {
   votingTimer = setTimeout(() => {
     addGameMessage('Voting period ended. Finalizing move...');
     finalizeMove();
-  }, 5000); // 5 seconds voting period
+  }, 15000); // 5 seconds voting period
 }
 
 async function main() {

@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Chessboard } from 'react-chessboard';
+import { Box, Flex, Text, Heading, VStack } from '@chakra-ui/react'; // Import Chakra UI components
 
 // --- Correctly importing P2PChessNode and ChessGame related types/helpers from the library ---
 import { ChessGame, MoveBlock, sha256, ChessJsVerboseMove, convertMoveToUCI, P2PChessNode, ProposalMessage, FinalizedMoveMessage, HistoryRequestMessage, HistoryResponseMessage, CurrentStateMessage } from 'chess-lib';
 
 // Define the common topic for Gossipsub
 const MAIN_TOPIC = `pubXXX-dev`;
-const VOTING_PERIOD_MS = 5000; // 5 seconds for voting
+const VOTING_PERIOD_MS = 15000; // 5 seconds for voting
 
 
 export default function App() {
@@ -23,7 +24,6 @@ export default function App() {
   // Refs to hold instances of non-React classes
   const chessGameRef = useRef<ChessGame | null>(null);
   const p2pNodeRef = useRef<P2PChessNode | null>(null);
-  // FIX: Changed NodeJS.Timeout to number for browser compatibility
   const votingTimerRef = useRef<number | null>(null);
   const countdownIntervalRef = useRef<number | null>(null);
 
@@ -318,8 +318,9 @@ export default function App() {
 
   // --- User Interaction and Game Board ---
 
-  const onDrop = useCallback((sourceSquare: string, targetSquare: string, piece: string) => { // Removed async
-    if (!chessGameRef.current || !isVotingActiveRef.current || !p2pNodeRef.current) { // FIX: Use isVotingActiveRef.current
+  const onDrop = useCallback((sourceSquare: string, targetSquare: string, piece: string) => {
+    // FIX: Use isVotingActiveRef.current and currentTurnRef.current for latest state
+    if (!chessGameRef.current || !isVotingActiveRef.current || !p2pNodeRef.current) {
       addGameMessage("Cannot propose move: Voting not active or P2P node not ready.");
       return false;
     }
@@ -337,15 +338,14 @@ export default function App() {
       const uciMove = convertMoveToUCI(moveAttempt as ChessJsVerboseMove);
       addGameMessage(`User proposing move: ${uciMove}`);
       // FIX: Removed await and added .catch() for fire-and-forget
-      p2pNodeRef.current.publishMessage({ type: 'proposal', move: uciMove, turn: currentTurnRef.current } as ProposalMessage) // FIX: Use currentTurnRef.current
+      p2pNodeRef.current.publishMessage({ type: 'proposal', move: uciMove, turn: currentTurnRef.current } as ProposalMessage)
         .catch(error => addGameMessage(`Error publishing proposal: ${error.message}`));
       return true; // Indicate that the move was accepted by the local game instance (for visual feedback)
     } else {
       addGameMessage(`Invalid move: ${sourceSquare}-${targetSquare}`);
       return false; // Indicate that the move was not accepted
     }
-  }, [addGameMessage]); // Removed isVotingActive, currentTurn from dependencies as they are read from refs
-
+  }, [addGameMessage]); // Dependencies updated to reflect use of refs
 
   // --- Add useEffect to observe currentVotes state changes ---
   useEffect(() => {
@@ -370,6 +370,7 @@ export default function App() {
         if (chessGameRef.current?.moveHistory.length === 0) {
           startVotingPeriod();
         }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (error: any) {
         addGameMessage(`Failed to start P2P node: ${error.message}`);
       }
@@ -395,7 +396,16 @@ export default function App() {
 
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center p-4 font-inter">
+    <Flex
+      minH="100vh"
+      bg="gray.900"
+      color="white"
+      direction="column"
+      align="center"
+      justify="center"
+      p={4}
+      fontFamily="Inter, sans-serif" // Direct font-family for Chakra
+    >
       <style jsx global>{`
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         body {
@@ -403,19 +413,42 @@ export default function App() {
         }
       `}</style>
 
-      <h1 className="text-4xl font-bold mb-6 text-yellow-400">P2P Consensus Chess</h1>
+      <Heading as="h1" fontSize="4xl" fontWeight="bold" mb={6} color="yellow.400">
+        P2P Consensus Chess
+      </Heading>
 
-      <div className="flex flex-col lg:flex-row gap-8 w-full max-w-6xl">
+      <Flex
+        direction={{ base: 'column', lg: 'row' }}
+        gap={8}
+        w="full"
+        maxW="6xl"
+      >
         {/* Left Column: Game Info & Board */}
-        <div className="flex-1 flex flex-col items-center bg-gray-800 p-6 rounded-lg shadow-lg">
-          <div className="mb-4 text-center">
-            <p className="text-lg">Your Peer ID: <span className="font-mono text-blue-400 break-all">{peerId || 'Connecting...'}</span></p>
-            <p className="text-lg">Connected Peers: <span className="font-bold text-green-400">{connectedPeers.size}</span></p>
-            <p className="text-xl mt-2">Current Turn: <span className="font-bold">{currentTurn + 1}</span> (<span className="capitalize">{chessGameRef.current?.getTurnColor() === 'w' ? 'White' : 'Black'}</span> to move)</p>
-            <p className="text-xl">Time Remaining: <span className="font-bold text-red-400">{timer}s</span></p>
-          </div>
+        <Flex
+          flex={1}
+          direction="column"
+          align="center"
+          bg="gray.800"
+          p={6}
+          rounded="lg"
+          shadow="lg"
+        >
+          <Box mb={4} textAlign="center">
+            <Text fontSize="lg">
+              Your Peer ID: <Text as="span" fontFamily="mono" color="blue.400" wordBreak="break-all">{peerId || 'Connecting...'}</Text>
+            </Text>
+            <Text fontSize="lg">
+              Connected Peers: <Text as="span" fontWeight="bold" color="green.400">{connectedPeers.size}</Text>
+            </Text>
+            <Text fontSize="xl" mt={2}>
+              Current Turn: <Text as="span" fontWeight="bold">{currentTurn + 1}</Text> (<Text as="span" textTransform="capitalize">{chessGameRef.current?.getTurnColor() === 'w' ? 'White' : 'Black'}</Text> to move)
+            </Text>
+            <Text fontSize="xl">
+              Time Remaining: <Text as="span" fontWeight="bold" color="red.400">{timer}s</Text>
+            </Text>
+          </Box>
 
-          <div style={{ width: "500px" }}>
+          <Box width="500px">
             <Chessboard
               position={gameFen}
               onPieceDrop={onDrop}
@@ -425,50 +458,57 @@ export default function App() {
                 boxShadow: '0 4px 12px rgba(0, 0, 0, 0.5)',
               }}
             />
-          </div>
-        </div>
+          </Box>
+        </Flex>
 
         {/* Right Column: Voting & Logs */}
-        <div className="flex-1 flex flex-col gap-6">
+        <Flex flex={1} direction="column" gap={6}>
           {/* Voting Area */}
-          <div className="bg-gray-800 p-6 rounded-lg shadow-lg flex-grow">
-            <h2 className="text-2xl font-semibold mb-4 text-center">Vote Tally</h2>
+          <Box bg="gray.800" p={6} rounded="lg" shadow="lg" flexGrow={1}>
+            <Heading as="h2" fontSize="2xl" fontWeight="semibold" mb={4} textAlign="center">
+              Vote Tally
+            </Heading>
             {isVotingActive ? (
               currentVotes.size > 0 ? (
-                <ul className="space-y-2">
+                <VStack as="ul" spacing={2} align="stretch"> {/* Using VStack for ul */}
                   {[...currentVotes.entries()]
                     .sort(([, countA], [, countB]) => countB - countA) // Sort by votes (desc)
                     .map(([move, count]) => (
-                      <li key={move} className="flex justify-between items-center bg-gray-700 p-3 rounded-md">
-                        <span className="font-mono text-lg text-green-300">{move}</span>
-                        <span className="font-bold text-xl text-yellow-300">{count} votes</span>
-                      </li>
+                      <Flex as="li" key={move} justify="space-between" align="center" bg="gray.700" p={3} rounded="md">
+                        <Text fontFamily="mono" fontSize="lg" color="green.300">{move}</Text>
+                        <Text fontWeight="bold" fontSize="xl" color="yellow.300">{count} votes</Text>
+                      </Flex>
                     ))}
-                </ul>
+                </VStack>
               ) : (
-                <p className="text-center text-gray-400">No votes yet for this round.</p>
+                <Text textAlign="center" color="gray.400">No votes yet for this round.</Text>
               )
             ) : (
-              <p className="text-center text-gray-400">Voting is currently inactive.</p>
+              <Text textAlign="center" color="gray.400">Voting is currently inactive.</Text>
             )}
-          </div>
+          </Box>
 
           {/* Game Logs */}
-          <div className="bg-gray-800 p-6 rounded-lg shadow-lg flex-grow h-64 overflow-y-auto">
-            <h2 className="text-2xl font-semibold mb-4 text-center">Game Logs</h2>
-            <div className="space-y-2 text-sm text-gray-300">
+          <Box bg="gray.800" p={6} rounded="lg" shadow="lg" flexGrow={1} h="64" overflowY="auto" maxWidth="100%" wordBreak="break-all">
+            <Heading as="h2" fontSize="2xl" fontWeight="semibold" mb={4} textAlign="center">
+              Game Logs
+            </Heading>
+            <VStack spacing={2} fontSize="sm" color="gray.300" align="stretch">
               {gameLogs.map((log, index) => (
-                <p key={index} className="border-b border-gray-700 pb-1 last:border-b-0">{log}</p>
+                <Text key={index} borderBottom="1px" borderColor="gray.700" pb={1} _last={{ borderBottom: 'none' }}>
+                  {log}
+                </Text>
               ))}
-            </div>
-          </div>
-        </div>
-      </div>
+            </VStack>
+          </Box>
+        </Flex>
+      </Flex>
 
       {/* Footer / Debug Info */}
-      <div className="mt-8 text-center text-gray-500 text-sm">
-        <p>Built with Next.js, React, libp2p, and react-chessboard</p>
-      </div>
-    </div>
+      <Box mt={8} textAlign="center" color="gray.500" fontSize="sm">
+        <Text>Built with Next.js, React, libp2p, and react-chessboard</Text>
+      </Box>
+    </Flex>
   );
 }
+
