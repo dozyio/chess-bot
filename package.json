@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "npm run build && node dist/src/cli.js",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "aegir test"
   },
   "keywords": [],
   "author": "",
@@ -28,6 +29,9 @@
   },
   "devDependencies": {
     "@libp2p/interface": "^2.10.5",
-    "aegir": "^47.0.6"
+    "@types/sinon": "^17.0.4",
+    "aegir": "^47.0.6",
+    "chai": "^4.5.0",
+    "sinon": "^21.0.0"
   }
 }
