@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Chessboard } from 'react-chessboard';
 
@@ -11,7 +10,7 @@ const VOTING_PERIOD_MS = 5000; // 5 seconds for voting
 
 
 export default function App() {
-  const [gameFen, setGameFen] = useState<string>('');
+  const [gameFen, setGameFen] = useState<string>('start'); // Initialized to 'start' FEN
   const [gameHistory, setGameHistory] = useState<MoveBlock[]>([]);
   const [currentTurn, setCurrentTurn] = useState<number>(0);
   const [peerId, setPeerId] = useState<string>('');
@@ -23,10 +22,23 @@ export default function App() {
 
   // Refs to hold instances of non-React classes
   const chessGameRef = useRef<ChessGame | null>(null);
-  // Now using P2PChessNode directly from the imported library
   const p2pNodeRef = useRef<P2PChessNode | null>(null);
-  const votingTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // FIX: Changed NodeJS.Timeout to number for browser compatibility
+  const votingTimerRef = useRef<number | null>(null);
+  const countdownIntervalRef = useRef<number | null>(null);
+
+  // Refs to hold the LATEST state values for callbacks that might capture old state
+  const isVotingActiveRef = useRef(isVotingActive);
+  const currentTurnRef = useRef(currentTurn);
+
+  // Update refs whenever the state changes
+  useEffect(() => {
+    isVotingActiveRef.current = isVotingActive;
+  }, [isVotingActive]);
+
+  useEffect(() => {
+    currentTurnRef.current = currentTurn;
+  }, [currentTurn]);
 
   // --- Logging function for UI ---
   const addGameMessage = useCallback((message: string) => {
@@ -39,8 +51,11 @@ export default function App() {
   // --- P2P Callbacks for the P2PChessNode ---
   const p2pCallbacks = useRef({
     onPeerConnected: (peerId: string) => {
-      setConnectedPeers(prev => new Set(prev).add(peerId));
-      addGameMessage(`Connected to peer: ${peerId}. Total: ${connectedPeers.size + 1}`); // +1 because state update is async
+      setConnectedPeers(prev => {
+        const newSet = new Set(prev).add(peerId);
+        addGameMessage(`Connected to peer: ${peerId}. Total: ${newSet.size}`); // Log updated size
+        return newSet;
+      });
       // Request history from new peer if our history is empty
       if (chessGameRef.current && chessGameRef.current.moveHistory.length === 0 && p2pNodeRef.current) {
         addGameMessage(`Requesting game history from new peer: ${peerId}`);
@@ -51,16 +66,24 @@ export default function App() {
       setConnectedPeers(prev => {
         const newSet = new Set(prev);
         newSet.delete(peerId);
+        addGameMessage(`Disconnected from peer: ${peerId}. Total: ${newSet.size}`); // Log updated size
         return newSet;
       });
-      addGameMessage(`Disconnected from peer: ${peerId}. Total: ${connectedPeers.size - 1}`); // -1 because state update is async
     },
     onMessageReceived: async (message: any, fromPeer: string) => {
+      addGameMessage(`[P2P Message Received] Type: ${message.type}, From: ${fromPeer}`); // Added log
       if (!chessGameRef.current || !p2pNodeRef.current) return;
+
+      // FIX: Pass the latest state values to handleProposal/handleFinalizedMove
+      // This is crucial because p2pCallbacks.current is stable, so its methods
+      // would otherwise capture stale state.
+      const latestIsVotingActive = isVotingActiveRef.current;
+      const latestCurrentTurn = currentTurnRef.current;
 
       switch (message.type) {
         case 'proposal':
-          await handleProposal(message as ProposalMessage, fromPeer);
+          // Pass latest state explicitly
+          await handleProposal(message as ProposalMessage, fromPeer, latestIsVotingActive, latestCurrentTurn);
           break;
         case 'finalized_move':
           await handleFinalizedMove(message as FinalizedMoveMessage, fromPeer);
@@ -80,39 +103,51 @@ export default function App() {
       }
     },
     onLog: addGameMessage,
-  })
+  });
 
   // --- Game Logic Functions (adapted for React state) ---
 
-  const handleProposal = useCallback(async (proposal: ProposalMessage, fromPeer: string) => {
-    if (!chessGameRef.current || !isVotingActive) {
-      addGameMessage(`Ignoring proposal from ${fromPeer} for move ${proposal.move}: Game not initialized or not in active voting period.`);
+  // FIX: handleProposal now accepts isVotingActive and currentTurn as explicit arguments
+  const handleProposal = useCallback(async (proposal: ProposalMessage, fromPeer: string, latestIsVotingActive: boolean, latestCurrentTurn: number) => {
+    addGameMessage(`[Handle Proposal] Processing proposal from ${fromPeer} for move ${proposal.move} (Proposal Turn: ${proposal.turn})`); // Added log
+    addGameMessage(`[Handle Proposal] Current state (from passed args): isVotingActive=${latestIsVotingActive}, currentTurn=${latestCurrentTurn}, gameRef.current=${!!chessGameRef.current}`); // Added log
+
+    if (!chessGameRef.current) {
+      addGameMessage(`[Handle Proposal] Ignoring: chessGameRef.current is null.`); // Added log
       return;
     }
-    if (proposal.turn !== currentTurn) {
-      addGameMessage(`Ignoring proposal from ${fromPeer} for move ${proposal.move}: Proposal turn (${proposal.turn}) does not match current voting turn (${currentTurn}).`);
+    // FIX: Use the latestIsVotingActive passed as argument
+    if (!latestIsVotingActive) {
+      addGameMessage(`[Handle Proposal] Ignoring: Voting is not active (latestIsVotingActive=false).`); // Added log
+      return;
+    }
+    // FIX: Use the latestCurrentTurn passed as argument
+    if (proposal.turn !== latestCurrentTurn) {
+      addGameMessage(`[Handle Proposal] Ignoring: Proposal turn (${proposal.turn}) does not match current voting turn (${latestCurrentTurn}).`); // Added log
       return;
     }
 
     const newFen = chessGameRef.current.validateMove(chessGameRef.current.getFen(), proposal.move);
     if (newFen) {
+      addGameMessage(`[Handle Proposal] Move ${proposal.move} is valid. Adding vote.`); // Added log
       setCurrentVotes(prevVotes => {
-        const newVotes = new Map(prevVotes);
+        const newVotes = new Map(prevVotes); // FIX: Create a new Map instance
         newVotes.set(proposal.move, (newVotes.get(proposal.move) || 0) + 1);
         addGameMessage(`Vote received for ${proposal.move} from ${fromPeer}. Total votes for ${proposal.move}: ${newVotes.get(proposal.move)}`);
+        addGameMessage(`[Handle Proposal] Votes after update (inside updater): ${JSON.stringify(Array.from(newVotes.entries()))}`); // Debug log
         return newVotes;
       });
     } else {
-      addGameMessage(`Invalid move proposal ignored from ${fromPeer}: ${proposal.move} (Chess validation failed). Current FEN: ${chessGameRef.current.getFen()}`);
+      addGameMessage(`[Handle Proposal] Invalid move proposal: ${proposal.move}.`); // Added log
     }
-  }, [isVotingActive, currentTurn, addGameMessage]);
+  }, [addGameMessage]); // Removed isVotingActive, currentTurn from dependencies as they are passed as args
 
   const finalizeMove = useCallback(async () => {
     setIsVotingActive(false);
     if (votingTimerRef.current) clearTimeout(votingTimerRef.current);
     if (countdownIntervalRef.current) clearInterval(countdownIntervalRef.current);
 
-    addGameMessage(`Current votes before finalization for turn ${currentTurn}:`);
+    addGameMessage(`[Finalize Move] Starting for turn: ${currentTurn}, currentVotes size: ${currentVotes.size}`); // Added log
     currentVotes.forEach((count, move) => {
       addGameMessage(`  - ${move}: ${count} votes`);
     });
@@ -183,7 +218,7 @@ export default function App() {
           turn: blockTurn,
         };
 
-        addGameMessage(`Broadcasting our proposed finalized block for turn ${newMoveBlock.turn}: ${newMoveBlock.moveUCI} (Hash: ${newMoveBlock.blockHash.substring(0, 8)}...)`);
+        addGameMessage(`[Finalize Move] Broadcasting finalized block for turn ${newMoveBlock.turn}`); // Added log
         await p2pNodeRef.current.publishMessage({ type: 'finalized_move', ...newMoveBlock } as FinalizedMoveMessage);
       } else {
         addGameMessage(`Error: Determined winning move ${winningMoveUCI} is invalid during finalization. Skipping turn. (Local decision)`);
@@ -217,10 +252,10 @@ export default function App() {
       setGameHistory([...chessGameRef.current.moveHistory]);
       setCurrentTurn(chessGameRef.current.currentTurn);
       setCurrentVotes(new Map()); // Clear votes for next round
-      addGameMessage(`Game state updated to turn ${chessGameRef.current.currentTurn}. New FEN: ${chessGameRef.current.getFen()} (from peer ${fromPeer})`);
+      addGameMessage(`[Finalized Move Applied] New Turn: ${chessGameRef.current.currentTurn}, New FEN: ${chessGameRef.current.getFen()} (from peer ${fromPeer})`); // Added log
       startVotingPeriod(); // Start new voting period after state update
     } else {
-      addGameMessage(`Ignoring finalized block from ${fromPeer} for turn ${incomingBlockMessage.turn}: Chain validation failed or shorter chain.`);
+      addGameMessage(`[Finalized Move Ignored] from ${fromPeer} for turn ${incomingBlockMessage.turn}: Chain validation failed or shorter chain.`); // Added log
     }
   }, [addGameMessage]);
 
@@ -284,7 +319,7 @@ export default function App() {
   // --- User Interaction and Game Board ---
 
   const onDrop = useCallback((sourceSquare: string, targetSquare: string, piece: string) => { // Removed async
-    if (!chessGameRef.current || !isVotingActive || !p2pNodeRef.current) {
+    if (!chessGameRef.current || !isVotingActiveRef.current || !p2pNodeRef.current) { // FIX: Use isVotingActiveRef.current
       addGameMessage("Cannot propose move: Voting not active or P2P node not ready.");
       return false;
     }
@@ -302,14 +337,20 @@ export default function App() {
       const uciMove = convertMoveToUCI(moveAttempt as ChessJsVerboseMove);
       addGameMessage(`User proposing move: ${uciMove}`);
       // FIX: Removed await and added .catch() for fire-and-forget
-      p2pNodeRef.current.publishMessage({ type: 'proposal', move: uciMove, turn: currentTurn } as ProposalMessage)
+      p2pNodeRef.current.publishMessage({ type: 'proposal', move: uciMove, turn: currentTurnRef.current } as ProposalMessage) // FIX: Use currentTurnRef.current
         .catch(error => addGameMessage(`Error publishing proposal: ${error.message}`));
       return true; // Indicate that the move was accepted by the local game instance (for visual feedback)
     } else {
       addGameMessage(`Invalid move: ${sourceSquare}-${targetSquare}`);
       return false; // Indicate that the move was not accepted
     }
-  }, [isVotingActive, currentTurn, addGameMessage]);
+  }, [addGameMessage]); // Removed isVotingActive, currentTurn from dependencies as they are read from refs
+
+
+  // --- Add useEffect to observe currentVotes state changes ---
+  useEffect(() => {
+    addGameMessage(`[currentVotes State Changed] New value: ${JSON.stringify(Array.from(currentVotes.entries()))}`);
+  }, [currentVotes, addGameMessage]);
 
 
   // --- P2P Node Lifecycle Management ---
