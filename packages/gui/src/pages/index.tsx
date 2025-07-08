@@ -435,9 +435,6 @@ export default function App() {
         >
           <Box mb={4} textAlign="center">
             <Text fontSize="lg">
-              Your Peer ID: <Text as="span" fontFamily="mono" color="blue.400" wordBreak="break-all">{peerId || 'Connecting...'}</Text>
-            </Text>
-            <Text fontSize="lg">
               Connected Peers: <Text as="span" fontWeight="bold" color="green.400">{connectedPeers.size}</Text>
             </Text>
             <Text fontSize="xl" mt={2}>
@@ -506,7 +503,9 @@ export default function App() {
 
       {/* Footer / Debug Info */}
       <Box mt={8} textAlign="center" color="gray.500" fontSize="sm">
-        <Text>Built with Next.js, React, libp2p, and react-chessboard</Text>
+        <Text>
+          Your Peer ID: <Text as="span" fontFamily="mono" wordBreak="break-all">{peerId || 'Connecting...'}</Text>
+        </Text>
       </Box>
     </Flex>
   );
