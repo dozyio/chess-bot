@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { Box, Flex, Text, Heading, VStack } from '@chakra-ui/react'; // Import Chakra UI components
@@ -6,12 +7,12 @@ import { Box, Flex, Text, Heading, VStack } from '@chakra-ui/react'; // Import C
 import { ChessGame, MoveBlock, sha256, ChessJsVerboseMove, convertMoveToUCI, P2PChessNode, ProposalMessage, FinalizedMoveMessage, HistoryRequestMessage, HistoryResponseMessage, CurrentStateMessage } from 'chess-lib';
 
 // Define the common topic for Gossipsub
-const MAIN_TOPIC = `pubXXX-dev`;
 const VOTING_PERIOD_MS = 15000; // 5 seconds for voting
 
 
 export default function App() {
   const [gameFen, setGameFen] = useState<string>('start'); // Initialized to 'start' FEN
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [gameHistory, setGameHistory] = useState<MoveBlock[]>([]);
   const [currentTurn, setCurrentTurn] = useState<number>(0);
   const [peerId, setPeerId] = useState<string>('');
@@ -236,6 +237,7 @@ export default function App() {
       setCurrentVotes(new Map());
       startVotingPeriod();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTurn, currentVotes, addGameMessage]);
 
   const handleFinalizedMove = useCallback(async (incomingBlockMessage: FinalizedMoveMessage, fromPeer: string) => {
@@ -257,6 +259,7 @@ export default function App() {
     } else {
       addGameMessage(`[Finalized Move Ignored] from ${fromPeer} for turn ${incomingBlockMessage.turn}: Chain validation failed or shorter chain.`); // Added log
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addGameMessage]);
 
   const handleHistoryRequest = useCallback(async (request: HistoryRequestMessage, fromPeer: string) => {
@@ -285,6 +288,7 @@ export default function App() {
     } else {
       addGameMessage(`Ignoring full history from ${fromPeer}: Invalid chain or shorter/equal chain with higher hash.`);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addGameMessage]);
 
 
@@ -299,7 +303,7 @@ export default function App() {
     addGameMessage(`Voting for turn ${currentTurn + 1} (${chessGameRef.current?.getTurnColor() === 'w' ? 'White' : 'Black'}) started. ${VOTING_PERIOD_MS / 1000} seconds...`);
 
     // Start countdown interval
-    countdownIntervalRef.current = setInterval(() => {
+    countdownIntervalRef.current = window.setInterval(() => {
       setTimer(prev => {
         if (prev <= 1) {
           clearInterval(countdownIntervalRef.current!);
@@ -310,7 +314,7 @@ export default function App() {
     }, 1000);
 
     // Set timeout to finalize move
-    votingTimerRef.current = setTimeout(() => {
+    votingTimerRef.current = window.setTimeout(() => {
       addGameMessage('Voting period ended. Finalizing move...');
       finalizeMove();
     }, VOTING_PERIOD_MS);
@@ -370,7 +374,7 @@ export default function App() {
         if (chessGameRef.current?.moveHistory.length === 0) {
           startVotingPeriod();
         }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       } catch (error: any) {
         addGameMessage(`Failed to start P2P node: ${error.message}`);
       }
@@ -392,6 +396,7 @@ export default function App() {
       if (broadcastInterval) clearInterval(broadcastInterval);
       p2pNodeRef.current?.stop();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [addGameMessage, p2pCallbacks]);
 
 
@@ -467,7 +472,7 @@ export default function App() {
             </Heading>
             {isVotingActive ? (
               currentVotes.size > 0 ? (
-                <VStack as="ul" spacing={2} align="stretch"> {/* Using VStack for ul */}
+                <VStack as="ul" align="stretch"> {/* Using VStack for ul */}
                   {[...currentVotes.entries()]
                     .sort(([, countA], [, countB]) => countB - countA) // Sort by votes (desc)
                     .map(([move, count]) => (
@@ -490,7 +495,7 @@ export default function App() {
             <Heading as="h2" fontSize="2xl" fontWeight="semibold" mb={4} textAlign="center">
               Game Logs
             </Heading>
-            <VStack spacing={2} fontSize="sm" color="gray.300" align="stretch">
+            <VStack fontSize="sm" color="gray.300" align="stretch">
               {gameLogs.map((log, index) => (
                 <Text key={index} borderBottom="1px" borderColor="gray.700" pb={1} _last={{ borderBottom: 'none' }}>
                   {log}
