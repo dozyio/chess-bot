@@ -1,0 +1,55 @@
+name: Deploy GUI to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read # for checkout
+  pages: write # to deploy
+  id-token: write # for configure-pages (if used)
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm" # caches root & workspace node_modules
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build & Export GUI
+        working-directory: packages/gui
+        run: npm run build
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: packages/gui/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Share published URL
+        run: echo "Deployed at ${{ steps.deployment.outputs.page_url }}"
